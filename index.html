@@ -97,12 +97,14 @@
       if (root) {
         root.innerHTML = `
           <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; background-color: #f8fafc; padding: 20px; text-align: center;">
-            <div style="background: white; padding: 32px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 1px solid #fecdd3; max-width: 480px; width: 100%;">
+            <div style="background: white; padding: 32px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 1px solid #fecdd3; max-width: 600px; width: 100%;">
               <div style="font-size: 40px; margin-bottom: 12px;">⚠️</div>
               <h2 style="margin: 0 0 8px 0; color: #9f1239; font-size: 20px; font-weight: 700;">Masalah Muat Cache Browser</h2>
-              <p style="color: #475569; font-size: 13px; margin: 0 0 20px 0; line-height: 1.5;">
-                Browser Anda masih menyimpan cache versi lama. Klik tombol di bawah ini untuk membersihkan cache dan memuat ulang aplikasi terbaru secara otomatis:
-              </p>
+              <div style="background: #fff1f2; border: 1px solid #fecdd3; padding: 12px; border-radius: 8px; text-align: left; font-family: monospace; font-size: 11px; color: #9f1239; margin-bottom: 16px; word-break: break-all;">
+                <strong>Pesan:</strong> ${message}<br>
+                <strong>File / Line:</strong> ${source}:${lineno}:${colno}<br>
+                ${error && error.stack ? `<pre style="white-space: pre-wrap; font-size: 10px; margin-top: 6px;">${error.stack}</pre>` : ''}
+              </div>
               <button onclick="localStorage.clear(); sessionStorage.clear(); location.reload(true);" style="width: 100%; padding: 12px 20px; background: #dc2626; color: white; border: none; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer;">
                 🔄 Reset Cache & Buka Aplikasi Baru
               </button>
@@ -276,8 +278,10 @@
       return 0;
     }
 
+    // URL RESMI WEB APP GOOGLE APPS SCRIPT (DATABASE CLOUD SIBOS V1)
+    const SIBOS_OFFICIAL_GAS_URL = "https://script.google.com/macros/s/AKfycbzAPOi8SxKEjyhyMhcIP12tjlujnZWZOZ9YeH_IZQW0_rag2dnFBgGWaFj_MW4X8kkt/exec";
     
-    function AuthPage({ accounts, onLogin, onRegister, onUpdateAccounts }) {
+    function AuthPage({ accounts, onLogin, onRegister, onUpdateAccounts, appsScriptUrl, onSaveAppsScriptUrl, onFetchAccountsFromCloud }) {
       const [tab, setTab] = useState("login");
       const [loginNpsn, setLoginNpsn] = useState("");
       const [loginPassword, setLoginPassword] = useState("");
@@ -288,6 +292,40 @@
       const [regNamaSekolah, setRegNamaSekolah] = useState("");
       const [regKepalaSekolah, setRegKepalaSekolah] = useState("");
       const [regError, setRegError] = useState("");
+
+      // Cloud Database Config Modal States
+      const [showCloudConfigModal, setShowCloudConfigModal] = useState(false);
+      const [inputCloudUrl, setInputCloudUrl] = useState(appsScriptUrl || SIBOS_OFFICIAL_GAS_URL);
+      const [cloudStatus, setCloudStatus] = useState({ type: "", text: "" });
+      const [isTestingCloud, setIsTestingCloud] = useState(false);
+
+      const handleTestAndSyncCloud = async () => {
+        const url = inputCloudUrl.trim();
+        if (!url) {
+          setCloudStatus({ type: "error", text: "Mohon masukkan Web App URL Google Apps Script Anda." });
+          return;
+        }
+        setIsTestingCloud(true);
+        setCloudStatus({ type: "info", text: "Menghubungi server Google Apps Script..." });
+        try {
+          if (onSaveAppsScriptUrl) onSaveAppsScriptUrl(url);
+          const res = await fetch(`${url}?action=getAccounts`);
+          const json = await res.json();
+          if (json.status === "success") {
+            if (onFetchAccountsFromCloud) {
+              await onFetchAccountsFromCloud(url);
+            }
+            const count = (json.accounts && json.accounts.length) || 0;
+            setCloudStatus({ type: "success", text: `✅ Berhasil terhubung! Ditemukan ${count} akun sekolah dari Google Cloud Spreadsheet.` });
+          } else {
+            throw new Error(json.message || "Respon dari Google Cloud tidak valid");
+          }
+        } catch (err) {
+          setCloudStatus({ type: "error", text: `❌ Gagal terhubung: ${err.message || err}` });
+        } finally {
+          setIsTestingCloud(false);
+        }
+      };
 
       // Super Admin States
       const [showSuperAdminModal, setShowSuperAdminModal] = useState(false);
@@ -300,7 +338,7 @@
       const [saSchoolForm, setSaSchoolForm] = useState({ originalNpsn: "", npsn: "", namaSekolah: "", kepalaSekolah: "", password: "" });
       const [showPasswordMap, setShowPasswordMap] = useState({});
 
-      const handleLoginSubmit = (e) => {
+      const handleLoginSubmit = async (e) => {
         e.preventDefault();
         setLoginError("");
         const cleanNpsn = loginNpsn.trim();
@@ -311,9 +349,21 @@
           return;
         }
 
-        const acc = accounts.find(a => a.npsn === cleanNpsn || a.namaSekolah.toLowerCase() === cleanNpsn.toLowerCase());
+        let acc = accounts.find(a => a.npsn === cleanNpsn || a.namaSekolah.toLowerCase() === cleanNpsn.toLowerCase());
+        
+        // Jika akun lokal belum ada tapi Cloud URL aktif, cek ke Cloud secara otomatis
+        if (!acc && (appsScriptUrl || localStorage.getItem("bos_apps_script_url")) && onFetchAccountsFromCloud) {
+          setLoginError("🔍 Memeriksa pendaftaran akun di database Google Cloud...");
+          try {
+            const cloudRes = await onFetchAccountsFromCloud();
+            if (cloudRes && cloudRes.accounts) {
+              acc = cloudRes.accounts.find(a => a.npsn === cleanNpsn || a.namaSekolah.toLowerCase() === cleanNpsn.toLowerCase());
+            }
+          } catch(err) {}
+        }
+
         if (!acc) {
-          setLoginError(`NPSN "${cleanNpsn}" belum terdaftar. Silakan lakukan registrasi sekolah terlebih dahulu.`);
+          setLoginError(`NPSN "${cleanNpsn}" belum terdaftar. Silakan lakukan registrasi sekolah atau klik icon ☁️ di pojok kanan atas jika akun dibuat di perangkat lain.`);
           return;
         }
 
@@ -431,8 +481,24 @@
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4 relative">
           
-          {/* TOMBOL GIR KECIL SUPER ADMIN DI KANAN ATAS */}
-          <div className="fixed top-5 right-5 z-40">
+          {/* TOMBOL CLOUD GOOGLE & GIR SUPER ADMIN DI KANAN ATAS */}
+          <div className="fixed top-5 right-5 z-40 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setInputCloudUrl(appsScriptUrl || localStorage.getItem("bos_apps_script_url") || "");
+                setCloudStatus({ type: "", text: "" });
+                setShowCloudConfigModal(true);
+              }}
+              title="Hubungkan Database Cloud Google (Akses Antar-Perangkat / HP)"
+              className={`w-10 h-10 rounded-xl border backdrop-blur-md flex items-center justify-center transition shadow-xl hover:scale-110 cursor-pointer text-lg ${
+                appsScriptUrl 
+                  ? "bg-sky-950/90 hover:bg-sky-900 text-sky-400 border-sky-500/50 shadow-sky-900/30 ring-1 ring-sky-400/30" 
+                  : "bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-sky-300 border-slate-700/80"
+              }`}
+            >
+              ☁️
+            </button>
             <button
               type="button"
               onClick={() => { setShowSuperAdminModal(true); setSaPassword(""); setSaError(""); }}
@@ -887,11 +953,133 @@
             </div>
           )}
 
+          {/* MODAL PENGATURAN DATABASE CLOUD (GOOGLE APPS SCRIPT) */}
+          {showCloudConfigModal && (
+            <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-700/20 max-w-lg w-full overflow-hidden">
+                <div className="bg-gradient-to-r from-sky-900 to-indigo-950 p-5 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-xl">
+                      ☁️
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-white">Database Cloud Google</h3>
+                      <p className="text-[11px] text-sky-200">Akses Realtime dari HP & Browser Lain</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCloudConfigModal(false)}
+                    className="text-slate-400 hover:text-white text-xl cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="bg-sky-50 border border-sky-200 rounded-xl p-3.5 text-xs text-sky-900 space-y-1">
+                    <p className="font-bold flex items-center gap-1.5 text-sky-950">
+                      <span>💡</span> Sinkronisasi Cloud Antar-Perangkat
+                    </p>
+                    <p className="leading-relaxed text-slate-700">
+                      Masukkan URL Web App dari <strong>Google Apps Script</strong> Anda di bawah ini agar akun sekolah dan data yang disimpan di komputer dapat langsung terbuka di HP (smartphone) atau browser lainnya.
+                    </p>
+                  </div>
+
+                  {cloudStatus.text && (
+                    <div className={`p-3 rounded-xl text-xs font-semibold border ${
+                      cloudStatus.type === "success" 
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
+                        : cloudStatus.type === "error" 
+                        ? "bg-red-50 border-red-200 text-red-800" 
+                        : "bg-blue-50 border-blue-200 text-blue-800"
+                    }`}>
+                      {cloudStatus.text}
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700">
+                        URL Web App Google Apps Script (/exec):
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputCloudUrl(SIBOS_OFFICIAL_GAS_URL);
+                            if (onSaveAppsScriptUrl) onSaveAppsScriptUrl(SIBOS_OFFICIAL_GAS_URL);
+                          }}
+                          className="text-[11px] text-blue-600 hover:underline font-semibold cursor-pointer"
+                        >
+                          Gunakan Link Resmi
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(inputCloudUrl || SIBOS_OFFICIAL_GAS_URL);
+                            alert("📋 Link Web App Google Apps Script berhasil disalin ke clipboard!");
+                          }}
+                          className="text-[11px] text-emerald-600 hover:underline font-semibold cursor-pointer"
+                        >
+                          📋 Salin
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="url"
+                      placeholder="https://script.google.com/macros/s/.../exec"
+                      value={inputCloudUrl}
+                      onChange={(e) => setInputCloudUrl(e.target.value)}
+                      className="w-full text-xs font-mono border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-sky-500 outline-none transition"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                      Link resmi aktif terhubung ke database Google Spreadsheet Anda.
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleTestAndSyncCloud}
+                      disabled={isTestingCloud}
+                      className="flex-1 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{isTestingCloud ? "⏳" : "🧪"}</span>
+                      <span>{isTestingCloud ? "Menghubungi Cloud..." : "Uji & Ambil Akun"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onSaveAppsScriptUrl) onSaveAppsScriptUrl(inputCloudUrl.trim());
+                        setShowCloudConfigModal(false);
+                      }}
+                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition cursor-pointer"
+                    >
+                      💾 Simpan & Tutup
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       );
     }
 
     function App() {
+      const [appsScriptUrl, setAppsScriptUrl] = useState(() => {
+        return localStorage.getItem("bos_apps_script_url") || SIBOS_OFFICIAL_GAS_URL;
+      });
+
+      const handleSaveAppsScriptUrl = (newUrl) => {
+        const cleaned = (newUrl || "").trim();
+        setAppsScriptUrl(cleaned);
+        localStorage.setItem("bos_apps_script_url", cleaned);
+      };
+
       const [accounts, setAccounts] = useState(() => {
         const saved = localStorage.getItem("bos_accounts");
         if (saved) {
@@ -904,6 +1092,31 @@
         localStorage.setItem("bos_accounts", JSON.stringify(def));
         return def;
       });
+
+      // Fungsi ambil data akun dari Cloud Google Apps Script
+      const fetchAccountsFromCloud = async (urlToUse) => {
+        const targetUrl = (urlToUse || appsScriptUrl || "").trim();
+        if (!targetUrl) return { success: false, message: "URL Web App belum diisi" };
+        try {
+          const res = await fetch(`${targetUrl}?action=getAccounts`);
+          const json = await res.json();
+          if (json.status === "success" && Array.isArray(json.accounts) && json.accounts.length > 0) {
+            setAccounts(json.accounts);
+            localStorage.setItem("bos_accounts", JSON.stringify(json.accounts));
+            return { success: true, count: json.accounts.length, accounts: json.accounts };
+          }
+          return { success: false, message: json.message || "Data akun tidak ditemukan di Cloud" };
+        } catch (err) {
+          return { success: false, message: err.message || "Gagal menghubungi Google Cloud" };
+        }
+      };
+
+      // Auto-fetch accounts dari cloud on startup jika appsScriptUrl sudah tersimpan
+      useEffect(() => {
+        if (appsScriptUrl) {
+          fetchAccountsFromCloud(appsScriptUrl);
+        }
+      }, [appsScriptUrl]);
 
       // WAJIB KE AKSES LOGIN SETIAP MEMBUKA WEB SIBOS
       // Menggunakan sessionStorage sehingga setiap browser dibuka baru, pengguna wajib login terlebih dahulu
@@ -923,6 +1136,21 @@
         setAccounts(nextAccs);
         localStorage.setItem("bos_accounts", JSON.stringify(nextAccs));
         
+        // Simpan juga ke Cloud Google Spreadsheet jika appsScriptUrl aktif
+        if (appsScriptUrl) {
+          fetch(appsScriptUrl, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({
+              action: "registerSchool",
+              npsn: newAcc.npsn,
+              namaSekolah: newAcc.namaSekolah,
+              kepalaSekolah: newAcc.kepalaSekolah,
+              password: newAcc.password
+            })
+          }).catch(e => console.warn("Cloud register error:", e));
+        }
+
         // Pastikan ruang data sekolah baru disiapkan dalam keadaan 100% KOSONG
         const emptyPerbulan = {
           "Januari": [], "Februari": [], "Maret": [], "April": [], "Mei": [], "Juni": [],
@@ -966,12 +1194,36 @@
         const next = accounts.map(a => a.npsn === npsn ? { ...a, password: newPassword } : a);
         setAccounts(next);
         localStorage.setItem("bos_accounts", JSON.stringify(next));
+
+        if (appsScriptUrl) {
+          fetch(appsScriptUrl, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({
+              action: "updatePassword",
+              npsn: npsn,
+              password: newPassword
+            })
+          }).catch(e => console.warn("Cloud update password error:", e));
+        }
+
         alert(`✅ Password akun sekolah berhasil diubah! Gunakan password baru ini saat masuk kembali.`);
       };
 
       const handleUpdateAccounts = (newAccounts) => {
         setAccounts(newAccounts);
         localStorage.setItem("bos_accounts", JSON.stringify(newAccounts));
+
+        if (appsScriptUrl) {
+          fetch(appsScriptUrl, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({
+              action: "syncAccounts",
+              accounts: newAccounts
+            })
+          }).catch(e => console.warn("Cloud sync accounts error:", e));
+        }
       };
 
       if (!currentUser) {
@@ -981,6 +1233,9 @@
             onLogin={handleLogin} 
             onRegister={handleRegister}
             onUpdateAccounts={handleUpdateAccounts}
+            appsScriptUrl={appsScriptUrl}
+            onSaveAppsScriptUrl={handleSaveAppsScriptUrl}
+            onFetchAccountsFromCloud={fetchAccountsFromCloud}
           />
         );
       }
@@ -991,6 +1246,8 @@
           currentUser={currentUser} 
           onLogout={handleLogout}
           onUpdatePassword={handleUpdateAccountPassword}
+          appsScriptUrl={appsScriptUrl}
+          onSaveAppsScriptUrl={handleSaveAppsScriptUrl}
           onUpdateAccountInfo={(updatedHeader) => {
             const nextAccs = accounts.map(a => a.npsn === currentUser.npsn ? {
               ...a,
@@ -1005,12 +1262,21 @@
     }
 
 
-function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePassword }) {
+function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePassword, appsScriptUrl, onSaveAppsScriptUrl }) {
       // Menu View: 'database' | 'belanja' | 'si' | 'rekap' | 'perbulan'
       const [currentView, setCurrentView] = useState("database");
       const [selectedMonthView, setSelectedMonthView] = useState("Semua");
       const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
       const [isPerBulanOpen, setIsPerBulanOpen] = useState(false);
+
+      // State Database Cloud Google Apps Script
+      const [cloudUrlInput, setCloudUrlInput] = useState(appsScriptUrl || localStorage.getItem("bos_apps_script_url") || SIBOS_OFFICIAL_GAS_URL);
+      const [cloudSyncStatus, setCloudSyncStatus] = useState("idle"); // 'idle' | 'syncing' | 'synced' | 'error'
+      const [cloudStatusMsg, setCloudStatusMsg] = useState("");
+      const [cloudLastSynced, setCloudLastSynced] = useState(() => {
+        return localStorage.getItem(`bos_${currentUser.npsn}_last_cloud_sync`) || "";
+      });
+      const [showCloudGuideModal, setShowCloudGuideModal] = useState(false);
 
       // State Ubah Password di Pengaturan Sekolah
       const [newPasswordVal, setNewPasswordVal] = useState("");
@@ -1119,6 +1385,185 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePass
         return localStorage.getItem(`bos_${currentUser.npsn}_custom_kop_v1`) || "";
       });
 
+      // Handlers Cloud Google Spreadsheet (Google Apps Script)
+      const handlePushDataToCloud = async (silent = false) => {
+        const url = (appsScriptUrl || cloudUrlInput || localStorage.getItem("bos_apps_script_url") || "").trim();
+        if (!url) {
+          if (!silent) {
+            alert("⚠️ URL Google Apps Script belum diisi!\n\nSilakan masukkan URL Web App Google Apps Script di menu 'Pengaturan Sekolah' > 'Database Cloud Google'.");
+            setCurrentView("pengaturan");
+          }
+          return;
+        }
+        setCloudSyncStatus("syncing");
+        setCloudStatusMsg("Menyinkronkan ke Cloud Google...");
+        try {
+          const payload = {
+            action: "syncSchool",
+            npsn: currentUser.npsn,
+            data: {
+              headerInfo: headerInfo,
+              masterRkas: masterRkas,
+              perBulanData: perBulanData,
+              belanjaBankList: belanjaBankList,
+              danaMasukList: danaMasukList,
+              saldoAwal: saldoAwal,
+              manualPurchasedMap: manualPurchasedMap,
+              manualKeteranganTextMap: manualKeteranganTextMap,
+              customLogoUrl: customLogoUrl,
+              customKopSuratUrl: customKopSuratUrl
+            }
+          };
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(payload)
+          });
+          const result = await res.json();
+          if (result.status === "success") {
+            const nowStr = new Date().toLocaleString("id-ID");
+            setCloudSyncStatus("synced");
+            setCloudLastSynced(nowStr);
+            localStorage.setItem(`bos_${currentUser.npsn}_last_cloud_sync`, nowStr);
+            setCloudStatusMsg(`Tersinkron: ${nowStr}`);
+            if (!silent) {
+              alert(`✅ Sinkronisasi Berhasil!\n\nSeluruh data sekolah "${headerInfo.namaSekolah || currentUser.namaSekolah}" (NPSN: ${currentUser.npsn}) telah tersimpan aman di Google Cloud Spreadsheet.\n\nData ini dapat langsung dibuka dan tampil di HP, tablet, maupun browser lain!`);
+            }
+          } else {
+            throw new Error(result.message || "Gagal menyimpan ke Google Cloud");
+          }
+        } catch (err) {
+          console.error("Cloud push error:", err);
+          setCloudSyncStatus("error");
+          setCloudStatusMsg("Gagal sinkron cloud");
+          if (!silent) {
+            alert(`⚠️ Gagal menyinkronkan data ke Google Cloud:\n\n${err.message || err}\n\nPastikan URL berakhiran '/exec' dan akses deployment diatur ke 'Anyone'.`);
+          }
+        }
+      };
+
+      const handlePullDataFromCloud = async (silent = false) => {
+        const url = (appsScriptUrl || cloudUrlInput || localStorage.getItem("bos_apps_script_url") || "").trim();
+        if (!url) {
+          if (!silent) alert("⚠️ URL Google Apps Script belum diisi!");
+          return;
+        }
+        setCloudSyncStatus("syncing");
+        setCloudStatusMsg("Mengambil data dari Cloud Google...");
+        try {
+          const res = await fetch(`${url}?action=getSchoolData&npsn=${encodeURIComponent(currentUser.npsn)}`);
+          const result = await res.json();
+          if (result.status === "success" && result.data) {
+            const d = result.data;
+            let loadedCount = 0;
+
+            if (d.headerInfo && typeof d.headerInfo === "object" && Object.keys(d.headerInfo).length > 0) {
+              setHeaderInfo(d.headerInfo);
+              localStorage.setItem(`bos_${currentUser.npsn}_header_info_v3`, JSON.stringify(d.headerInfo));
+              loadedCount++;
+            }
+            if (Array.isArray(d.masterRkas) && d.masterRkas.length > 0) {
+              setMasterRkas(d.masterRkas);
+              localStorage.setItem(`bos_${currentUser.npsn}_master_rkas_pdf_final`, JSON.stringify(d.masterRkas));
+              loadedCount++;
+            }
+            if (d.perBulanData && typeof d.perBulanData === "object" && Object.keys(d.perBulanData).length > 0) {
+              setPerBulanData(d.perBulanData);
+              localStorage.setItem(`bos_${currentUser.npsn}_perbulan_data_final_v20`, JSON.stringify(d.perBulanData));
+              loadedCount++;
+            }
+            if (Array.isArray(d.belanjaBankList) && d.belanjaBankList.length > 0) {
+              setBelanjaBankList(d.belanjaBankList);
+              localStorage.setItem(`bos_${currentUser.npsn}_belanja_bank_v6`, JSON.stringify(d.belanjaBankList));
+              loadedCount++;
+            }
+            if (Array.isArray(d.danaMasukList) && d.danaMasukList.length > 0) {
+              setDanaMasukList(d.danaMasukList);
+              localStorage.setItem(`bos_${currentUser.npsn}_dana_masuk_v1`, JSON.stringify(d.danaMasukList));
+              loadedCount++;
+            }
+            if (typeof d.saldoAwal === "number") {
+              setSaldoAwal(d.saldoAwal);
+              localStorage.setItem(`bos_${currentUser.npsn}_saldo_awal_v1`, String(d.saldoAwal));
+              loadedCount++;
+            }
+            if (d.manualPurchasedMap && typeof d.manualPurchasedMap === "object") {
+              setManualPurchasedMap(d.manualPurchasedMap);
+              localStorage.setItem(`bos_${currentUser.npsn}_manual_purchased_map_v4`, JSON.stringify(d.manualPurchasedMap));
+            }
+            if (d.manualKeteranganTextMap && typeof d.manualKeteranganTextMap === "object") {
+              setManualKeteranganTextMap(d.manualKeteranganTextMap);
+              localStorage.setItem(`bos_${currentUser.npsn}_manual_keterangan_text_map_v1`, JSON.stringify(d.manualKeteranganTextMap));
+            }
+            if (d.customLogoUrl) {
+              setCustomLogoUrl(d.customLogoUrl);
+              localStorage.setItem(`bos_${currentUser.npsn}_custom_logo_v1`, d.customLogoUrl);
+            }
+            if (d.customKopSuratUrl) {
+              setCustomKopSuratUrl(d.customKopSuratUrl);
+              localStorage.setItem(`bos_${currentUser.npsn}_custom_kop_v1`, d.customKopSuratUrl);
+            }
+
+            const nowStr = new Date().toLocaleString("id-ID");
+            setCloudSyncStatus("synced");
+            setCloudLastSynced(nowStr);
+            localStorage.setItem(`bos_${currentUser.npsn}_last_cloud_sync`, nowStr);
+            setCloudStatusMsg(`Tersinkron: ${nowStr}`);
+
+            if (!silent) {
+              if (loadedCount > 0) {
+                alert(`✅ Tarik Data Berhasil!\n\n${loadedCount} kategori data (Header, RKAS, Rincian Perbulan, Belanja Bank, Rekening Koran) berhasil dimuat dari Google Cloud ke perangkat ini.`);
+              } else {
+                alert(`ℹ️ Belum ada data tersimpan di Cloud untuk NPSN ${currentUser.npsn}.\n\nSilakan isi data atau lakukan sinkronisasi terlebih dahulu dari perangkat awal.`);
+              }
+            }
+          } else {
+            throw new Error(result.message || "Data tidak ditemukan");
+          }
+        } catch (err) {
+          console.error("Cloud pull error:", err);
+          setCloudSyncStatus("error");
+          setCloudStatusMsg("Gagal ambil data");
+          if (!silent) {
+            alert(`⚠️ Gagal mengambil data dari Google Cloud:\n\n${err.message || err}`);
+          }
+        }
+      };
+
+      const handleTestCloudConnection = async () => {
+        const url = (cloudUrlInput || appsScriptUrl || localStorage.getItem("bos_apps_script_url") || "").trim();
+        if (!url) {
+          alert("Silakan masukkan URL Web App Google Apps Script terlebih dahulu.");
+          return;
+        }
+        setCloudSyncStatus("syncing");
+        setCloudStatusMsg("Menguji koneksi...");
+        try {
+          const res = await fetch(`${url}?action=ping`);
+          const json = await res.json();
+          if (json.status === "success") {
+            setCloudSyncStatus("synced");
+            setCloudStatusMsg("Koneksi Cloud Berhasil!");
+            if (onSaveAppsScriptUrl) onSaveAppsScriptUrl(url);
+            alert(`✅ Koneksi Berhasil!\n\nBackend Google Apps Script terhubung dengan sukses.\nSpreadsheet ID: ${json.spreadsheetId || '-'}\nNama: ${json.spreadsheetName || '-'}`);
+          } else {
+            throw new Error(json.message || "Respon tidak valid");
+          }
+        } catch (err) {
+          setCloudSyncStatus("error");
+          setCloudStatusMsg("Gagal koneksi");
+          alert(`❌ Gagal terhubung ke Google Apps Script:\n\n${err.message || err}\n\nPeriksa kembali apakah:\n1. URL berakhiran '/exec' (bukan /edit atau /dev)\n2. Deploy > Who has access diatur ke 'Anyone'\n3. Izin akses (Authorization) sudah diberikan`);
+        }
+      };
+
+      // Auto-pull dari Cloud jika data master lokal masih kosong saat membuka ruang kerja
+      useEffect(() => {
+        const activeUrl = (appsScriptUrl || localStorage.getItem("bos_apps_script_url") || "").trim();
+        if (activeUrl && (!masterRkas || masterRkas.length === 0)) {
+          handlePullDataFromCloud(true);
+        }
+      }, []);
+
       // Handlers Pengaturan & Media
       const handleSavePengaturan = (e) => {
         if (e && e.preventDefault) e.preventDefault();
@@ -1136,7 +1581,19 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePass
         if (onUpdateAccountInfo) {
           onUpdateAccountInfo(headerInfo);
         }
-        alert("✅ Pengaturan Sekolah, Logo Web, & Kop Surat berhasil disimpan!");
+
+        // Simpan URL Apps Script jika diubah
+        const cleanedUrl = (cloudUrlInput || "").trim();
+        if (cleanedUrl && onSaveAppsScriptUrl) {
+          onSaveAppsScriptUrl(cleanedUrl);
+        }
+
+        // Auto upload ke Cloud Google Spreadsheet jika URL ada
+        if (cleanedUrl || appsScriptUrl) {
+          handlePushDataToCloud(true);
+        }
+
+        alert("✅ Pengaturan Sekolah, Logo Web, & Kop Surat berhasil disimpan dan disinkronkan ke Cloud!");
       };
 
       const handleUploadLogoFile = (e) => {
@@ -3180,6 +3637,33 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePass
 
                 {/* SCHOOL INFO PILL & LOGOUT BUTTON */}
                 <div className="flex items-center gap-2 pl-2 border-l border-slate-300">
+                  {/* TOMBOL CLOUD SYNC QUICK ACTION */}
+                  <button
+                    type="button"
+                    onClick={() => handlePushDataToCloud(false)}
+                    disabled={cloudSyncStatus === "syncing"}
+                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                      cloudSyncStatus === "syncing"
+                        ? "bg-amber-50 text-amber-700 border-amber-300 animate-pulse"
+                        : cloudSyncStatus === "synced"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                        : cloudSyncStatus === "error"
+                        ? "bg-red-50 text-red-700 border-red-300 hover:bg-red-100"
+                        : (appsScriptUrl || cloudUrlInput)
+                        ? "bg-sky-50 text-sky-700 border-sky-300 hover:bg-sky-100"
+                        : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                    }`}
+                    title={cloudLastSynced ? `Terakhir disinkronkan ke Cloud: ${cloudLastSynced}` : "Klik untuk menyinkronkan data ke Cloud Google"}
+                  >
+                    <span>{cloudSyncStatus === "syncing" ? "⏳" : "☁️"}</span>
+                    <span className="hidden md:inline">
+                      {cloudSyncStatus === "syncing" ? "Menyinkronkan..." : ((appsScriptUrl || cloudUrlInput) ? "Cloud Aktif" : "Hubungkan Cloud")}
+                    </span>
+                    {(appsScriptUrl || cloudUrlInput) && (
+                      <span className={`w-2 h-2 rounded-full ${cloudSyncStatus === "synced" ? "bg-emerald-500" : (cloudSyncStatus === "error" ? "bg-red-500" : "bg-sky-500")}`}></span>
+                    )}
+                  </button>
+
                   <div className="hidden lg:flex flex-col text-right">
                     <span className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[170px]">
                       {headerInfo.namaSekolah || currentUser?.namaSekolah}
@@ -4734,6 +5218,149 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePass
                       </div>
                     </div>
 
+                    {/* CARD 6: DATABASE CLOUD & INTEGRASI GOOGLE APPS SCRIPT */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white flex items-center justify-center text-xl shadow-md shadow-sky-500/20">
+                            ☁️
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                              Database Cloud Google (Google Apps Script)
+                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                                cloudSyncStatus === "synced" 
+                                  ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
+                                  : cloudSyncStatus === "syncing"
+                                  ? "bg-amber-100 text-amber-700 border border-amber-300 animate-pulse"
+                                  : cloudSyncStatus === "error"
+                                  ? "bg-red-100 text-red-700 border border-red-300"
+                                  : (appsScriptUrl || cloudUrlInput)
+                                  ? "bg-sky-100 text-sky-700 border border-sky-300"
+                                  : "bg-slate-100 text-slate-600 border border-slate-200"
+                              }`}>
+                                {cloudSyncStatus === "synced" ? "● Terhubung & Sinkron" : (cloudSyncStatus === "syncing" ? "● Sedang Sinkron..." : (cloudSyncStatus === "error" ? "● Gagal Koneksi" : ((appsScriptUrl || cloudUrlInput) ? "● Siap Digunakan" : "○ Belum Diatur")))}
+                              </span>
+                            </h3>
+                            <p className="text-xs text-slate-500">
+                              Penyimpanan online terpusat agar data yang diunggah dapat tampil dan diakses dari HP (smartphone), tablet, laptop, dan browser lain.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowCloudGuideModal(true)}
+                          className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>📖</span> Panduan Pasang Code.gs
+                        </button>
+                      </div>
+
+                      {cloudStatusMsg && (
+                        <div className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between border ${
+                          cloudSyncStatus === "synced"
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                            : cloudSyncStatus === "syncing"
+                            ? "bg-amber-50 border-amber-200 text-amber-800"
+                            : cloudSyncStatus === "error"
+                            ? "bg-red-50 border-red-200 text-red-800"
+                            : "bg-sky-50 border-sky-200 text-sky-800"
+                        }`}>
+                          <span className="flex items-center gap-1.5">
+                            <span>{cloudSyncStatus === "syncing" ? "⏳" : (cloudSyncStatus === "synced" ? "✅" : (cloudSyncStatus === "error" ? "⚠️" : "ℹ️"))}</span>
+                            <span>{cloudStatusMsg}</span>
+                          </span>
+                          {cloudLastSynced && (
+                            <span className="text-[11px] font-mono text-slate-500">
+                              Terakhir: {cloudLastSynced}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold text-slate-700">
+                            URL Web App Google Apps Script (/exec):
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCloudUrlInput(SIBOS_OFFICIAL_GAS_URL);
+                                if (onSaveAppsScriptUrl) onSaveAppsScriptUrl(SIBOS_OFFICIAL_GAS_URL);
+                                alert("✅ Link Web App default telah diatur!");
+                              }}
+                              className="text-[11px] text-blue-600 hover:underline font-semibold cursor-pointer"
+                            >
+                              Gunakan Link Resmi
+                            </button>
+                            <span className="text-slate-300">|</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(cloudUrlInput || SIBOS_OFFICIAL_GAS_URL);
+                                alert("📋 Link Exec Google Apps Script berhasil disalin ke clipboard!");
+                              }}
+                              className="text-[11px] text-emerald-600 hover:underline font-semibold cursor-pointer"
+                            >
+                              📋 Salin Link
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="url"
+                            value={cloudUrlInput}
+                            onChange={(e) => setCloudUrlInput(e.target.value)}
+                            placeholder="https://script.google.com/macros/s/.../exec"
+                            className="flex-1 text-xs font-mono border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleTestCloudConnection}
+                            disabled={cloudSyncStatus === "syncing"}
+                            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <span>🧪</span> Tes Koneksi
+                          </button>
+                        </div>
+                        <span className="text-[11px] text-slate-400 block">
+                          Terhubung ke database Google Apps Script (Deployment Active: <code>/exec</code>).
+                        </span>
+                      </div>
+
+                      {/* TOMBOL AKSI SINKRONISASI MANUAL */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => handlePushDataToCloud(false)}
+                          disabled={cloudSyncStatus === "syncing"}
+                          className="p-3 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-xl shadow-sm transition flex items-center justify-center gap-2 font-bold text-xs cursor-pointer"
+                        >
+                          <span>⬆️</span>
+                          <span>Upload Semua Data ke Cloud Sekarang</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePullDataFromCloud(false)}
+                          disabled={cloudSyncStatus === "syncing"}
+                          className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl shadow-xs transition flex items-center justify-center gap-2 font-bold text-xs cursor-pointer"
+                        >
+                          <span>⬇️</span>
+                          <span>Tarik / Pulihkan Data dari Cloud (HP/Browser Baru)</span>
+                        </button>
+                      </div>
+
+                      <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 flex items-start gap-2">
+                        <span className="text-base leading-none">💡</span>
+                        <span>
+                          <strong>Sinkronisasi Otomatis:</strong> Setiap kali Anda mengklik tombol <em>"Simpan Pengaturan Sekolah & Media"</em> di bawah, data sekolah, RKAS, transaksi perbulan, dan dokumen Anda akan otomatis diunggah dan diperbarui ke Google Cloud Spreadsheet.
+                        </span>
+                      </div>
+                    </div>
+
                     {/* SAVE BUTTON BAR */}
                     <div className="flex justify-end gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm sticky bottom-4 z-10">
                       <button
@@ -5503,6 +6130,112 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePass
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL PANDUAN PEMASANGAN GOOGLE APPS SCRIPT (CODE.GS) */}
+          {showCloudGuideModal && (
+            <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-700/20 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="bg-gradient-to-r from-sky-900 to-indigo-950 p-5 text-white flex items-center justify-between sticky top-0 z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-xl">
+                      📖
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-white">Panduan Lengkap Pemasangan Database Cloud</h3>
+                      <p className="text-[11px] text-sky-200">Google Apps Script & Google Spreadsheet</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCloudGuideModal(false)}
+                    className="text-slate-400 hover:text-white text-xl cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-5 text-xs text-slate-700 leading-relaxed">
+                  <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-1">
+                    <p className="font-bold text-sky-950 text-sm flex items-center gap-2">
+                      <span>☁️</span> Mengapa Memerlukan Google Apps Script?
+                    </p>
+                    <p className="text-sky-900">
+                      Google Apps Script bertindak sebagai jembatan/server gratis antara web SiBOS di komputer Anda dengan Google Spreadsheet. Dengan mengaktifkan ini, semua data RKAS, rekening koran, belanja, dan login akun sekolah akan tersimpan online dan langsung dapat dibuka di HP (smartphone) atau komputer lain.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex gap-3">
+                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
+                        1
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-slate-800">Buka Google Apps Script atau Google Spreadsheet</p>
+                        <p>
+                          Buka browser dan kunjungi <a href="https://script.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-semibold">script.google.com</a> lalu klik <strong>"New Project"</strong>. Atau Anda juga bisa membuat Google Sheets baru &gt; menu <strong>Extensions (Ekstensi)</strong> &gt; <strong>Apps Script</strong>.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
+                        2
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-slate-800">Salin & Tempel Kode dari File Code.gs</p>
+                        <p>
+                          Di editor Google Apps Script, hapus semua kode bawaan di file <code>Code.gs</code>. Buka file <strong>Code.gs</strong> yang ada di folder aplikasi SiBOS V1, salin seluruh kodenya (Ctrl+A lalu Ctrl+C), dan tempelkan (Ctrl+V) ke dalam editor Apps Script. Lalu tekan ikon <strong>Save (Ctrl+S)</strong>.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
+                        3
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-slate-800">Deploy sebagai Web App</p>
+                        <p>
+                          Klik tombol biru <strong>"Deploy"</strong> di pojok kanan atas editor &gt; pilih <strong>"New deployment"</strong>:
+                        </p>
+                        <ul className="list-disc pl-5 space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-200 font-mono text-[11px]">
+                          <li>Pilih type: <strong>Web app</strong> (ikon roda gigi)</li>
+                          <li>Description: <strong>SiBOS V1 Cloud Database</strong></li>
+                          <li>Execute as: <strong>Me (email Anda)</strong></li>
+                          <li>Who has access: <strong>Anyone</strong> (Wajib pilih "Anyone" agar HP &amp; browser lain bisa mengakses)</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
+                        4
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-slate-800">Berikan Otorisasi &amp; Salin URL Web App</p>
+                        <p>
+                          Klik <strong>"Deploy"</strong>. Jika muncul dialog perizinan: klik <em>"Authorize access"</em> &gt; pilih akun Google Anda &gt; klik <em>"Advanced"</em> &gt; klik <em>"Go to ... (unsafe)"</em> &gt; klik <em>"Allow"</em>.
+                        </p>
+                        <p className="text-emerald-700 font-semibold bg-emerald-50 p-2 rounded border border-emerald-200">
+                          Salin <strong>Web app URL</strong> yang berakhiran <code>/exec</code>, lalu tempelkan ke kolom URL di Pengaturan SiBOS!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-3 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setShowCloudGuideModal(false)}
+                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                    >
+                      Saya Mengerti, Tutup Panduan
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
