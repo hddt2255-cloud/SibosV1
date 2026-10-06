@@ -15,7 +15,7 @@ def get_bundle_dir():
 class SiBosInstallerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Wizard Instalasi SiBos SDIT ANNISA")
+        self.root.title("Wizard Instalasi SiBos V1 - Pengelolaan BOS & RKAS")
         self.root.geometry("640x460")
         self.root.resizable(False, False)
 

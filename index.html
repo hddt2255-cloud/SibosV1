@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aplikasi BOS SDIT ANNISA - Standing Instruction & Database Belanja</title>
+  <title>SiBOS V1 - Aplikasi Pengelolaan Dana BOS & Belanja SI</title>
+  <link rel="icon" type="image/png" href="sibos_icon.png">
+  <link rel="apple-touch-icon" href="sibos_icon.png">
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- React & ReactDOM (cdnjs fast CDN) -->
@@ -65,15 +67,19 @@
     }
     @media print {
       @page {
-        size: A4 portrait;
-        margin: 8mm 12mm;
+        size: A4 landscape;
+        margin: 6mm 8mm;
       }
       body {
         background-color: #ffffff !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
       .no-print { display: none !important; }
+      .sidebar-fixed { display: none !important; }
       .main-content { margin-left: 0 !important; padding: 0 !important; width: 100% !important; }
-      .print-container { padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: none !important; width: 100% !important; }
+      .print-container { padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: none !important; width: 100% !important; max-width: 100% !important; }
+      .overflow-x-auto { overflow: visible !important; }
       table { border-collapse: collapse !important; width: 100% !important; page-break-inside: auto; }
       tr { page-break-inside: avoid; page-break-after: auto; }
       thead { display: table-header-group; }
@@ -271,16 +277,28 @@
     }
 
     
-    function AuthPage({ accounts, onLogin, onRegister }) {
+    function AuthPage({ accounts, onLogin, onRegister, onUpdateAccounts }) {
       const [tab, setTab] = useState("login");
       const [loginNpsn, setLoginNpsn] = useState("");
       const [loginPassword, setLoginPassword] = useState("");
+      const [showLoginPassword, setShowLoginPassword] = useState(false);
       const [loginError, setLoginError] = useState("");
 
       const [regNpsn, setRegNpsn] = useState("");
       const [regNamaSekolah, setRegNamaSekolah] = useState("");
-      const [regPassword, setRegPassword] = useState("");
+      const [regKepalaSekolah, setRegKepalaSekolah] = useState("");
       const [regError, setRegError] = useState("");
+
+      // Super Admin States
+      const [showSuperAdminModal, setShowSuperAdminModal] = useState(false);
+      const [isSuperAdminLoggedIn, setIsSuperAdminLoggedIn] = useState(false);
+      const [saPassword, setSaPassword] = useState("");
+      const [saError, setSaError] = useState("");
+      
+      // Super Admin Management Modal States
+      const [saActionModal, setSaActionModal] = useState(null); // 'add' | 'edit' | null
+      const [saSchoolForm, setSaSchoolForm] = useState({ originalNpsn: "", npsn: "", namaSekolah: "", kepalaSekolah: "", password: "" });
+      const [showPasswordMap, setShowPasswordMap] = useState({});
 
       const handleLoginSubmit = (e) => {
         e.preventDefault();
@@ -293,9 +311,9 @@
           return;
         }
 
-        const acc = accounts.find(a => a.npsn === cleanNpsn);
+        const acc = accounts.find(a => a.npsn === cleanNpsn || a.namaSekolah.toLowerCase() === cleanNpsn.toLowerCase());
         if (!acc) {
-          setLoginError(`NPSN ${cleanNpsn} belum terdaftar. Silakan registrasi akun terlebih dahulu.`);
+          setLoginError(`NPSN "${cleanNpsn}" belum terdaftar. Silakan lakukan registrasi sekolah terlebih dahulu.`);
           return;
         }
 
@@ -312,37 +330,126 @@
         setRegError("");
         const cleanNpsn = regNpsn.trim();
         const cleanNama = regNamaSekolah.trim();
-        const cleanPass = regPassword.trim() || cleanNpsn;
+        const cleanKepsek = regKepalaSekolah.trim();
 
-        if (!cleanNpsn || !cleanNama) {
-          setRegError("Mohon isi NPSN dan Nama Sekolah.");
+        if (!cleanNpsn || !cleanNama || !cleanKepsek) {
+          setRegError("Mohon lengkapi Nama Sekolah, NPSN, dan Nama Kepala Sekolah.");
           return;
         }
 
         const existing = accounts.find(a => a.npsn === cleanNpsn);
         if (existing) {
-          setRegError(`NPSN ${cleanNpsn} sudah terdaftar. Silakan masuk via menu Login.`);
+          setRegError(`NPSN ${cleanNpsn} sudah terdaftar (${existing.namaSekolah}). Silakan masuk via menu Login.`);
           return;
         }
 
         const newAcc = {
           npsn: cleanNpsn,
           namaSekolah: cleanNama,
-          password: cleanPass
+          kepalaSekolah: cleanKepsek,
+          password: cleanNpsn // Password default adalah NPSN!
         };
 
         onRegister(newAcc);
       };
 
+      const handleSuperAdminAuthSubmit = (e) => {
+        e.preventDefault();
+        setSaError("");
+        if (saPassword.trim() === "hdt123") {
+          setIsSuperAdminLoggedIn(true);
+          setSaError("");
+        } else {
+          setSaError("Password Super Admin salah!");
+        }
+      };
+
+      const handleSaveSchoolBySuperAdmin = (e) => {
+        e.preventDefault();
+        const cleanNpsn = saSchoolForm.npsn.trim();
+        const cleanNama = saSchoolForm.namaSekolah.trim();
+        const cleanKepsek = saSchoolForm.kepalaSekolah.trim();
+        const cleanPass = saSchoolForm.password.trim() || cleanNpsn;
+
+        if (!cleanNpsn || !cleanNama) {
+          alert("NPSN dan Nama Sekolah wajib diisi.");
+          return;
+        }
+
+        if (saActionModal === 'add') {
+          if (accounts.some(a => a.npsn === cleanNpsn)) {
+            alert(`NPSN ${cleanNpsn} sudah terdaftar! Gunakan NPSN lain.`);
+            return;
+          }
+          const newSchool = {
+            npsn: cleanNpsn,
+            namaSekolah: cleanNama,
+            kepalaSekolah: cleanKepsek || "Kepala Sekolah",
+            password: cleanPass
+          };
+          const next = [...accounts, newSchool];
+          onUpdateAccounts(next);
+          alert(`✅ Sekolah ${cleanNama} (NPSN: ${cleanNpsn}) berhasil ditambahkan!`);
+        } else if (saActionModal === 'edit') {
+          const next = accounts.map(a => a.npsn === saSchoolForm.originalNpsn ? {
+            ...a,
+            npsn: cleanNpsn,
+            namaSekolah: cleanNama,
+            kepalaSekolah: cleanKepsek,
+            password: cleanPass
+          } : a);
+          onUpdateAccounts(next);
+          alert(`✅ Data sekolah ${cleanNama} berhasil diperbarui!`);
+        }
+
+        setSaActionModal(null);
+      };
+
+      const handleDeleteSchoolBySuperAdmin = (school) => {
+        if (confirm(`Apakah Anda yakin ingin menghapus sekolah "${school.namaSekolah}" (NPSN: ${school.npsn})?\n\nSemua data anggaran dan belanja sekolah ini akan dibersihkan dari memori browser.`)) {
+          const next = accounts.filter(a => a.npsn !== school.npsn);
+          onUpdateAccounts(next);
+          
+          // Bersihkan data storage sekolah tersebut
+          const keysToDelete = [
+            `bos_${school.npsn}_perbulan_data_final_v20`,
+            `bos_${school.npsn}_header_info_v3`,
+            `bos_${school.npsn}_custom_logo_v1`,
+            `bos_${school.npsn}_custom_kop_v1`,
+            `bos_${school.npsn}_master_rkas_pdf_final`,
+            `bos_${school.npsn}_saldo_awal_v1`,
+            `bos_${school.npsn}_dana_masuk_v1`,
+            `bos_${school.npsn}_belanja_bank_v6`,
+            `bos_${school.npsn}_manual_purchased_map_v4`,
+            `bos_${school.npsn}_manual_keterangan_text_map_v1`
+          ];
+          keysToDelete.forEach(k => localStorage.removeItem(k));
+          alert(`✅ Sekolah "${school.namaSekolah}" berhasil dihapus.`);
+        }
+      };
+
       return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/30 overflow-hidden">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4 relative">
+          
+          {/* TOMBOL GIR KECIL SUPER ADMIN DI KANAN ATAS */}
+          <div className="fixed top-5 right-5 z-40">
+            <button
+              type="button"
+              onClick={() => { setShowSuperAdminModal(true); setSaPassword(""); setSaError(""); }}
+              title="Panel Super Admin"
+              className="w-10 h-10 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700/80 backdrop-blur-md flex items-center justify-center transition shadow-xl hover:scale-110 cursor-pointer text-lg"
+            >
+              ⚙️
+            </button>
+          </div>
+
+          <div className="w-full max-w-md bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/30 overflow-hidden z-10">
             <div className="bg-slate-900 p-6 text-center text-white relative border-b border-slate-800">
-              <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-500/30">
-                <span className="text-3xl">🏫</span>
+              <div className="w-20 h-20 rounded-2xl overflow-hidden mx-auto mb-3 shadow-xl shadow-blue-500/20 border border-slate-700/60 bg-slate-950 flex items-center justify-center p-1">
+                <img src="sibos_icon.png" alt="SiBos Logo" className="w-full h-full object-contain rounded-xl" />
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-white">Aplikasi SiBos</h1>
-              <p className="text-xs text-slate-400 mt-1">Management BOS & Standing Instruction Multi-Sekolah</p>
+              <p className="text-xs text-slate-400 mt-1">Pengelolaan BOS & RKAS Multi-Sekolah Terintegrasi</p>
             </div>
 
             <div className="flex border-b border-slate-200 bg-slate-50">
@@ -358,7 +465,7 @@
                 onClick={() => { setTab("register"); setRegError(""); }}
                 className={`flex-1 py-3 text-sm font-semibold transition ${tab === "register" ? "bg-white text-blue-600 border-b-2 border-blue-600" : "text-slate-500 hover:text-slate-700"}`}
               >
-                📝 Registrasi Akun
+                📝 Registrasi Sekolah
               </button>
             </div>
 
@@ -373,47 +480,58 @@
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Username / NPSN Sekolah
+                      User / NPSN Sekolah
                     </label>
                     <input
                       type="text"
-                      placeholder="Masukkan NPSN (Contoh: 20231556)"
+                      placeholder="Masukkan NPSN Sekolah..."
                       value={loginNpsn}
                       onChange={(e) => setLoginNpsn(e.target.value)}
-                      className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                      className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium"
                       required
+                      autoFocus
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Password (NPSN)
+                      Password
                     </label>
-                    <input
-                      type="password"
-                      placeholder="Masukkan Password (NPSN)"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                      required
-                    />
+                    <div className="relative">
+                      <input
+                        type={showLoginPassword ? "text" : "password"}
+                        placeholder="Masukkan Password..."
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-medium"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                        className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                        title="Tampilkan / Sembunyikan Password"
+                      >
+                        {showLoginPassword ? "🙈" : "👁️"}
+                      </button>
+                    </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-500/25 transition duration-200 mt-2"
+                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-500/25 transition duration-200 mt-2 cursor-pointer"
                   >
                     MASUK KE SIBOS
                   </button>
 
                   <div className="text-center pt-2">
-                    <span className="text-xs text-slate-500">Belum punya akun sekolah? </span>
+                    <span className="text-xs text-slate-500">Sekolah belum terdaftar? </span>
                     <button
                       type="button"
                       onClick={() => setTab("register")}
-                      className="text-xs font-bold text-blue-600 hover:underline"
+                      className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
                     >
-                      Daftar Sekarang
+                      Daftar Sekolah Sekarang
                     </button>
                   </div>
                 </form>
@@ -427,28 +545,11 @@
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      NPSN Sekolah (sebagai Username)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Contoh: 20231556"
-                      value={regNpsn}
-                      onChange={(e) => {
-                        setRegNpsn(e.target.value);
-                        if (!regPassword) setRegPassword(e.target.value);
-                      }}
-                      className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Nama Sekolah
                     </label>
                     <input
                       type="text"
-                      placeholder="Contoh: SDIT ANNISA / SDN 01 Jatiasih"
+                      placeholder="Contoh: SDIT ANNISA / SDN Sukamaju 01"
                       value={regNamaSekolah}
                       onChange={(e) => setRegNamaSekolah(e.target.value)}
                       className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
@@ -458,24 +559,41 @@
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Password Login (NPSN)
+                      NPSN Sekolah (sebagai User & Password awal)
                     </label>
                     <input
-                      type="password"
-                      placeholder="Default sama dengan NPSN"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
+                      type="text"
+                      placeholder="Contoh: 20231556"
+                      value={regNpsn}
+                      onChange={(e) => setRegNpsn(e.target.value)}
                       className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                       required
                     />
-                    <p className="text-[11px] text-slate-400 mt-1">Bisa diisi sama dengan NPSN atau password pilihan Anda.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Nama Kepala Sekolah
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Abdul Yakub, S.Ag"
+                      value={regKepalaSekolah}
+                      onChange={(e) => setRegKepalaSekolah(e.target.value)}
+                      className="w-full text-sm border border-slate-300 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                      required
+                    />
+                  </div>
+
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-blue-800">
+                    💡 <strong>Info Akun:</strong> Setelah berhasil registrasi, Anda akan langsung masuk ke aplikasi dengan <strong>ruang kerja bersih/kosong</strong>. Password login otomatis tersetting sama dengan NPSN.
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-emerald-500/25 transition duration-200 mt-2"
+                    className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-emerald-500/25 transition duration-200 mt-2 cursor-pointer"
                   >
-                    DAFTAR & BUAT AKUN SIBOS
+                    DAFTAR & LANGSUNG MASUK SIBOS
                   </button>
 
                   <div className="text-center pt-2">
@@ -483,7 +601,7 @@
                     <button
                       type="button"
                       onClick={() => setTab("login")}
-                      className="text-xs font-bold text-blue-600 hover:underline"
+                      className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
                     >
                       Kembali ke Login
                     </button>
@@ -492,6 +610,283 @@
               )}
             </div>
           </div>
+
+          {/* MODAL SUPER ADMIN AUTH (PASSWORD HDT123) */}
+          {showSuperAdminModal && !isSuperAdminLoggedIn && (
+            <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-700/20 max-w-sm w-full overflow-hidden">
+                <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">⚙️</span>
+                    <div>
+                      <h3 className="font-bold text-sm text-white">Login Super Admin</h3>
+                      <p className="text-[11px] text-slate-400">Akses Manajemen Seluruh Sekolah</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSuperAdminModal(false)}
+                    className="text-slate-400 hover:text-white text-xl cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <form onSubmit={handleSuperAdminAuthSubmit} className="p-5 space-y-4">
+                  {saError && (
+                    <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs font-semibold">
+                      ⚠️ {saError}
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Password Super Admin:
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="Masukkan Password Super Admin..."
+                      value={saPassword}
+                      onChange={(e) => setSaPassword(e.target.value)}
+                      className="w-full text-sm border border-slate-300 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 outline-none"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowSuperAdminModal(false)}
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-600/30"
+                    >
+                      Masuk Super Admin
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL DASHBOARD SUPER ADMIN */}
+          {showSuperAdminModal && isSuperAdminLoggedIn && (
+            <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 md:p-6 z-50 overflow-y-auto">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden my-auto">
+                {/* HEADER */}
+                <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-xl">
+                      ⚙️
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-white flex items-center gap-2">
+                        Panel Super Admin SiBOS
+                        <span className="text-[10px] bg-amber-500 text-slate-950 font-extrabold px-2 py-0.5 rounded-full">
+                          {accounts.length} Sekolah
+                        </span>
+                      </h2>
+                      <p className="text-xs text-slate-400">Daftar Akun Sekolah Terdaftar & Akses Multi-Tenant</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSaSchoolForm({ originalNpsn: "", npsn: "", namaSekolah: "", kepalaSekolah: "", password: "" });
+                        setSaActionModal('add');
+                      }}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition flex items-center gap-1 shadow cursor-pointer"
+                    >
+                      ➕ Tambah Sekolah
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowSuperAdminModal(false); setIsSuperAdminLoggedIn(false); }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs rounded-lg transition cursor-pointer"
+                    >
+                      ✕ Tutup
+                    </button>
+                  </div>
+                </div>
+
+                {/* BODY / TABEL DAFTAR SEKOLAH */}
+                <div className="p-5 overflow-y-auto flex-1 bg-slate-50">
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                          <th className="py-3 px-3 w-10 text-center">No</th>
+                          <th className="py-3 px-3">Nama Sekolah</th>
+                          <th className="py-3 px-3">NPSN (User)</th>
+                          <th className="py-3 px-3">Password</th>
+                          <th className="py-3 px-3">Kepala Sekolah</th>
+                          <th className="py-3 px-3 text-center w-48">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {accounts.map((acc, idx) => {
+                          const isShowPass = !!showPasswordMap[acc.npsn];
+                          return (
+                            <tr key={acc.npsn} className="hover:bg-slate-50/80 transition">
+                              <td className="py-3 px-3 text-center font-bold text-slate-500">{idx + 1}</td>
+                              <td className="py-3 px-3 font-bold text-slate-900">{acc.namaSekolah}</td>
+                              <td className="py-3 px-3 font-mono font-bold text-blue-700 bg-blue-50/50 rounded">{acc.npsn}</td>
+                              <td className="py-3 px-3 font-mono">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-semibold text-slate-800">
+                                    {isShowPass ? acc.password : "••••••••"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPasswordMap(prev => ({ ...prev, [acc.npsn]: !prev[acc.npsn] }))}
+                                    className="text-xs text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                                    title={isShowPass ? "Sembunyikan password" : "Lihat password"}
+                                  >
+                                    {isShowPass ? "🙈" : "👁️"}
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-slate-700 font-medium">{acc.kepalaSekolah || "-"}</td>
+                              <td className="py-3 px-3 text-center">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowSuperAdminModal(false);
+                                      setIsSuperAdminLoggedIn(false);
+                                      onLogin(acc);
+                                    }}
+                                    className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] rounded-lg transition shadow-sm cursor-pointer"
+                                    title="Masuk langsung ke ruang kerja sekolah ini"
+                                  >
+                                    🔑 Masuk
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSaSchoolForm({
+                                        originalNpsn: acc.npsn,
+                                        npsn: acc.npsn,
+                                        namaSekolah: acc.namaSekolah,
+                                        kepalaSekolah: acc.kepalaSekolah || "",
+                                        password: acc.password
+                                      });
+                                      setSaActionModal('edit');
+                                    }}
+                                    className="px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                                    title="Edit Sekolah"
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSchoolBySuperAdmin(acc)}
+                                    className="px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                                    title="Hapus Sekolah"
+                                  >
+                                    🗑️ Hapus
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* MODAL TAMBAH / EDIT SEKOLAH OLEH SUPER ADMIN */}
+                {saActionModal && (
+                  <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-60">
+                    <div className="bg-white rounded-xl shadow-2xl border border-slate-300 max-w-md w-full overflow-hidden">
+                      <div className="bg-slate-900 px-5 py-3.5 text-white flex justify-between items-center">
+                        <h4 className="font-bold text-sm">
+                          {saActionModal === 'add' ? '➕ Tambah Sekolah Baru' : '✏️ Edit Data Sekolah'}
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setSaActionModal(null)}
+                          className="text-slate-400 hover:text-white font-bold"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                      <form onSubmit={handleSaveSchoolBySuperAdmin} className="p-5 space-y-3.5">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Nama Sekolah:</label>
+                          <input
+                            type="text"
+                            required
+                            value={saSchoolForm.namaSekolah}
+                            onChange={(e) => setSaSchoolForm({ ...saSchoolForm, namaSekolah: e.target.value })}
+                            className="w-full text-xs font-semibold border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Contoh: SDIT ANNISA"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">NPSN (Username Login):</label>
+                          <input
+                            type="text"
+                            required
+                            value={saSchoolForm.npsn}
+                            onChange={(e) => setSaSchoolForm({ ...saSchoolForm, npsn: e.target.value })}
+                            className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="20231556"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Nama Kepala Sekolah:</label>
+                          <input
+                            type="text"
+                            value={saSchoolForm.kepalaSekolah}
+                            onChange={(e) => setSaSchoolForm({ ...saSchoolForm, kepalaSekolah: e.target.value })}
+                            className="w-full text-xs font-semibold border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Abdul Yakub, S.Ag"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Password Login:</label>
+                          <input
+                            type="text"
+                            required
+                            value={saSchoolForm.password}
+                            onChange={(e) => setSaSchoolForm({ ...saSchoolForm, password: e.target.value })}
+                            className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Ketik password login sekolah..."
+                          />
+                          <p className="text-[11px] text-slate-400 mt-1">Default password adalah NPSN.</p>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => setSaActionModal(null)}
+                            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg"
+                          >
+                            Batal
+                          </button>
+                          <button
+                            type="submit"
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-sm"
+                          >
+                            Simpan Data
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
         </div>
       );
     }
@@ -505,42 +900,89 @@
             if (Array.isArray(parsed) && parsed.length > 0) return parsed;
           } catch(e) {}
         }
-        const def = [{ npsn: "20231556", namaSekolah: "SDIT ANNISA", password: "20231556" }];
+        const def = [{ npsn: "20231556", namaSekolah: "SDIT ANNISA", kepalaSekolah: "Abdul Yakub, S.Ag", password: "20231556" }];
         localStorage.setItem("bos_accounts", JSON.stringify(def));
         return def;
       });
 
+      // WAJIB KE AKSES LOGIN SETIAP MEMBUKA WEB SIBOS
+      // Menggunakan sessionStorage sehingga setiap browser dibuka baru, pengguna wajib login terlebih dahulu
       const [activeNpsn, setActiveNpsn] = useState(() => {
-        return localStorage.getItem("bos_active_npsn") || "";
+        return sessionStorage.getItem("bos_active_npsn") || "";
       });
 
       const currentUser = accounts.find(a => a.npsn === activeNpsn) || null;
 
       const handleLogin = (acc) => {
         setActiveNpsn(acc.npsn);
-        localStorage.setItem("bos_active_npsn", acc.npsn);
+        sessionStorage.setItem("bos_active_npsn", acc.npsn);
       };
 
       const handleRegister = (newAcc) => {
         const nextAccs = [...accounts, newAcc];
         setAccounts(nextAccs);
         localStorage.setItem("bos_accounts", JSON.stringify(nextAccs));
-        setActiveNpsn(newAcc.npsn);
-        localStorage.setItem("bos_active_npsn", newAcc.npsn);
-        alert(`✅ Registrasi Berhasil!
+        
+        // Pastikan ruang data sekolah baru disiapkan dalam keadaan 100% KOSONG
+        const emptyPerbulan = {
+          "Januari": [], "Februari": [], "Maret": [], "April": [], "Mei": [], "Juni": [],
+          "Juli": [], "Agustus": [], "September": [], "Oktober": [], "November": [], "Desember": []
+        };
+        localStorage.setItem(`bos_${newAcc.npsn}_perbulan_data_final_v20`, JSON.stringify(emptyPerbulan));
+        localStorage.setItem(`bos_${newAcc.npsn}_master_rkas_pdf_final`, JSON.stringify([]));
+        localStorage.setItem(`bos_${newAcc.npsn}_belanja_bank_v6`, JSON.stringify([]));
+        localStorage.setItem(`bos_${newAcc.npsn}_dana_masuk_v1`, JSON.stringify([]));
+        localStorage.setItem(`bos_${newAcc.npsn}_saldo_awal_v1`, "0");
+        localStorage.setItem(`bos_${newAcc.npsn}_header_info_v3`, JSON.stringify({
+          npsn: newAcc.npsn,
+          namaSekolah: newAcc.namaSekolah,
+          kepalaSekolah: newAcc.kepalaSekolah || "",
+          alamat: "",
+          kabupaten: "Kota Bekasi",
+          provinsi: "Jawa Barat",
+          tahunAnggaran: "2026",
+          sumberDana: "BOS Reguler",
+          totalPenerimaan: 0,
+          bendaharaSekolah: "",
+          noRekening: "",
+          namaBank: "",
+          email: "",
+          noHp: ""
+        }));
 
-Akun ${newAcc.namaSekolah} (NPSN: ${newAcc.npsn}) telah berhasil dibuat dan otomatis masuk ke aplikasi.`);
+        setActiveNpsn(newAcc.npsn);
+        sessionStorage.setItem("bos_active_npsn", newAcc.npsn);
+        alert(`✅ Registrasi Berhasil!\n\nSekolah "${newAcc.namaSekolah}" (NPSN: ${newAcc.npsn}) berhasil didaftarkan.\nKepala Sekolah: ${newAcc.kepalaSekolah || '-'}.\n\nAnda langsung dialihkan ke Ruang Kerja SiBos dalam keadaan data baru yang bersih/kosong.`);
       };
 
       const handleLogout = () => {
-        if (confirm(`Keluar dari akun ${currentUser ? currentUser.namaSekolah : ""}?`)) {
+        if (confirm(`Keluar dari akun ${currentUser ? currentUser.namaSekolah : "Sekolah"}?`)) {
           setActiveNpsn("");
-          localStorage.removeItem("bos_active_npsn");
+          sessionStorage.removeItem("bos_active_npsn");
         }
       };
 
+      const handleUpdateAccountPassword = (npsn, newPassword) => {
+        const next = accounts.map(a => a.npsn === npsn ? { ...a, password: newPassword } : a);
+        setAccounts(next);
+        localStorage.setItem("bos_accounts", JSON.stringify(next));
+        alert(`✅ Password akun sekolah berhasil diubah! Gunakan password baru ini saat masuk kembali.`);
+      };
+
+      const handleUpdateAccounts = (newAccounts) => {
+        setAccounts(newAccounts);
+        localStorage.setItem("bos_accounts", JSON.stringify(newAccounts));
+      };
+
       if (!currentUser) {
-        return <AuthPage accounts={accounts} onLogin={handleLogin} onRegister={handleRegister} />;
+        return (
+          <AuthPage 
+            accounts={accounts} 
+            onLogin={handleLogin} 
+            onRegister={handleRegister}
+            onUpdateAccounts={handleUpdateAccounts}
+          />
+        );
       }
 
       return (
@@ -548,24 +990,58 @@ Akun ${newAcc.namaSekolah} (NPSN: ${newAcc.npsn}) telah berhasil dibuat dan otom
           key={currentUser.npsn} 
           currentUser={currentUser} 
           onLogout={handleLogout}
+          onUpdatePassword={handleUpdateAccountPassword}
           onUpdateAccountInfo={(updatedHeader) => {
-            if (updatedHeader.namaSekolah && updatedHeader.namaSekolah !== currentUser.namaSekolah) {
-              const nextAccs = accounts.map(a => a.npsn === currentUser.npsn ? { ...a, namaSekolah: updatedHeader.namaSekolah } : a);
-              setAccounts(nextAccs);
-              localStorage.setItem("bos_accounts", JSON.stringify(nextAccs));
-            }
+            const nextAccs = accounts.map(a => a.npsn === currentUser.npsn ? {
+              ...a,
+              namaSekolah: updatedHeader.namaSekolah || a.namaSekolah,
+              kepalaSekolah: updatedHeader.kepalaSekolah || a.kepalaSekolah
+            } : a);
+            setAccounts(nextAccs);
+            localStorage.setItem("bos_accounts", JSON.stringify(nextAccs));
           }}
         />
       );
     }
 
 
-function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
+function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo, onUpdatePassword }) {
       // Menu View: 'database' | 'belanja' | 'si' | 'rekap' | 'perbulan'
       const [currentView, setCurrentView] = useState("database");
       const [selectedMonthView, setSelectedMonthView] = useState("Semua");
       const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
       const [isPerBulanOpen, setIsPerBulanOpen] = useState(false);
+
+      // State Ubah Password di Pengaturan Sekolah
+      const [newPasswordVal, setNewPasswordVal] = useState("");
+      const [confirmPasswordVal, setConfirmPasswordVal] = useState("");
+      const [showNewPasswordVal, setShowNewPasswordVal] = useState(false);
+      const [passwordMsg, setPasswordMsg] = useState({ type: "", text: "" });
+
+      const handleSimpanPasswordBaru = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        setPasswordMsg({ type: "", text: "" });
+
+        if (!newPasswordVal.trim()) {
+          setPasswordMsg({ type: "error", text: "Password baru tidak boleh kosong!" });
+          return;
+        }
+        if (newPasswordVal.trim().length < 3) {
+          setPasswordMsg({ type: "error", text: "Password minimal 3 karakter!" });
+          return;
+        }
+        if (newPasswordVal.trim() !== confirmPasswordVal.trim()) {
+          setPasswordMsg({ type: "error", text: "Konfirmasi password tidak sesuai dengan password baru!" });
+          return;
+        }
+
+        if (onUpdatePassword) {
+          onUpdatePassword(currentUser.npsn, newPasswordVal.trim());
+          setPasswordMsg({ type: "success", text: "✅ Password akun sekolah berhasil diubah! Gunakan password baru ini saat login kembali." });
+          setNewPasswordVal("");
+          setConfirmPasswordVal("");
+        }
+      };
 
       // State Surat Transfer (Surat Pemindahbukuan)
       const [selectedSuratTransferDate, setSelectedSuratTransferDate] = useState("Semua");
@@ -625,7 +1101,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
           tahunAnggaran: "2026",
           sumberDana: "BOS Reguler",
           totalPenerimaan: 0,
-          kepalaSekolah: "",
+          kepalaSekolah: currentUser.kepalaSekolah || "",
           bendaharaSekolah: "",
           noRekening: "",
           namaBank: "",
@@ -656,6 +1132,9 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
           localStorage.setItem(`bos_${currentUser.npsn}_custom_kop_v1`, customKopSuratUrl);
         } else {
           localStorage.removeItem(`bos_${currentUser.npsn}_custom_kop_v1`);
+        }
+        if (onUpdateAccountInfo) {
+          onUpdateAccountInfo(headerInfo);
         }
         alert("✅ Pengaturan Sekolah, Logo Web, & Kop Surat berhasil disimpan!");
       };
@@ -725,7 +1204,8 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
             if (Array.isArray(parsed)) return parsed;
           } catch(e) {}
         }
-        return RKAS_PDF_165_ITEMS;
+        if (currentUser && currentUser.npsn === "20231556") return RKAS_PDF_165_ITEMS;
+        return [];
       });
 
       // DATABASE BELANJA / TRANSAKSI BANK (72 ITEM RESMI DARI DOKUMEN PDF LENGKAP)
@@ -860,7 +1340,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
       // 1. Download Backup Data Master RKAS (Wajib)
       const handleBackupMasterData = () => {
         const backupPayload = {
-          appTitle: "Aplikasi BOS SDIT ANNISA - Backup Database Master RKAS",
+          appTitle: `SiBOS V1 - Backup Database Master RKAS - ${headerInfo.namaSekolah || "Sekolah"}`,
           backupDate: new Date().toISOString(),
           headerInfo,
           masterRkas,
@@ -1295,7 +1775,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
 
       const handleBackupBelanjaData = () => {
         const backupPayload = {
-          appTitle: "Aplikasi BOS SDIT ANNISA - Backup Database Belanja Bank",
+          appTitle: `SiBOS V1 - Backup Database Belanja Bank - ${headerInfo.namaSekolah || "Sekolah"}`,
           backupDate: new Date().toISOString(),
           headerInfo,
           belanjaBankList
@@ -2337,10 +2817,10 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
           <aside className={`sidebar-fixed no-print ${isMobileMenuOpen ? "mobile-open" : ""}`}>
             <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-blue-600 rounded-lg text-white font-bold text-sm shadow">RKAS</div>
+                <img src="sibos_icon.png" alt="SiBos" className="w-9 h-9 rounded-xl shadow object-contain border border-slate-700 bg-slate-900" />
                 <div>
-                  <h1 className="font-bold text-sm text-white tracking-wide">BOS & BELANJA SI</h1>
-                  <p className="text-[10px] text-blue-400 font-semibold">{headerInfo.namaSekolah}</p>
+                  <h1 className="font-bold text-sm text-white tracking-wide">SiBOS V1</h1>
+                  <p className="text-[10px] text-blue-400 font-semibold truncate max-w-[150px]">{headerInfo.namaSekolah}</p>
                 </div>
               </div>
               <button 
@@ -2525,8 +3005,15 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
             </div>
 
             <div className="p-3 bg-slate-950 border-t border-slate-800 text-[11px] text-slate-400 flex flex-col gap-1 text-center">
-              <span>NPSN: {headerInfo.npsn}</span>
-              <span className="text-emerald-400 font-semibold">SDIT ANNISA T.A. 2026</span>
+              <span>NPSN: {headerInfo.npsn || currentUser?.npsn}</span>
+              <span className="text-emerald-400 font-semibold">{headerInfo.namaSekolah || currentUser?.namaSekolah}</span>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="mt-2 w-full py-1.5 bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800/60 rounded text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition shadow-xs"
+              >
+                <span>🚪</span> Keluar (Logout)
+              </button>
             </div>
           </aside>
 
@@ -2638,9 +3125,9 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       type="button"
                       onClick={() => window.print()}
                       className="bg-slate-800 hover:bg-black text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5 cursor-pointer"
-                      title="Cetak Langsung Dokumen"
+                      title="Cetak Dokumen"
                     >
-                      <span>🖨️</span> Print {currentView === "rek_koran" ? "Rekening Koran" : currentView === "surat_transfer" ? "Surat Transfer" : "SI"}
+                      <span>🖨️</span> Cetak {currentView === "rek_koran" ? "Rekening Koran" : currentView === "surat_transfer" ? "Surat Transfer" : "SI (Landscape A4)"}
                     </button>
                   </>
                 )}
@@ -2689,6 +3176,38 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* SCHOOL INFO PILL & LOGOUT BUTTON */}
+                <div className="flex items-center gap-2 pl-2 border-l border-slate-300">
+                  <div className="hidden lg:flex flex-col text-right">
+                    <span className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[170px]">
+                      {headerInfo.namaSekolah || currentUser?.namaSekolah}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      NPSN: {headerInfo.npsn || currentUser?.npsn}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentView("pengaturan");
+                    }}
+                    className={`p-2 rounded-lg border text-xs font-bold transition flex items-center gap-1 cursor-pointer ${currentView === "pengaturan" ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"}`}
+                    title="Buka Pengaturan & Ganti Password Sekolah"
+                  >
+                    <span>⚙️</span>
+                    <span className="hidden sm:inline">Pengaturan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold rounded-lg shadow-xs transition flex items-center gap-1 cursor-pointer"
+                    title="Keluar dari sesi akun sekolah"
+                  >
+                    <span>🚪</span>
+                    <span>Keluar</span>
+                  </button>
                 </div>
               </div>
             </header>
@@ -2828,7 +3347,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       {/* KEPALA SEKOLAH (KANAN) */}
                       <div className="text-center min-w-[220px]">
                         <p className="font-normal text-slate-900">Bekasi, 31 {selectedMonthView} 2026</p>
-                        <p className="font-normal text-slate-900 mt-0.5">Kepala SDIT ANNISA</p>
+                        <p className="font-normal text-slate-900 mt-0.5">Kepala {headerInfo.namaSekolah || "Sekolah"}</p>
                         <div className="h-20"></div>
                         <p className="font-bold text-slate-900">{headerInfo.kepalaSekolah}</p>
                       </div>
@@ -3200,7 +3719,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       {/* KEPALA SEKOLAH (KANAN) */}
                       <div className="text-center min-w-[220px]">
                         <p className="font-normal text-slate-900">Bekasi, 28 September 2026</p>
-                        <p className="font-normal text-slate-900 mt-0.5">Kepala SDIT ANNISA</p>
+                        <p className="font-normal text-slate-900 mt-0.5">Kepala {headerInfo.namaSekolah || "Sekolah"}</p>
                         <div className="h-20"></div>
                         <p className="font-bold text-slate-900">{headerInfo.kepalaSekolah}</p>
                       </div>
@@ -3213,6 +3732,23 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
               {/* VIEW 2: STANDING INSTRUCTION (SI) DENGAN FILTER TANGGAL CETAK & TANDA TANGAN KEPSEK / BENDAHARA */}
               {currentView === "si" && (
                 <div className="space-y-6">
+                  <style>{`
+                    @media print {
+                      @page {
+                        size: A4 landscape !important;
+                        margin: 6mm 8mm !important;
+                      }
+                      .si-print-table th, .si-print-table td {
+                        font-size: 10px !important;
+                        padding: 3.5px 5px !important;
+                      }
+                      .print-container {
+                        max-width: 100% !important;
+                        width: 100% !important;
+                        padding: 0 !important;
+                      }
+                    }
+                  `}</style>
                   
                   {/* FILTER BAR STANDING INSTRUCTION (NO-PRINT) */}
                   <div className="no-print bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap justify-between items-center gap-4">
@@ -3244,8 +3780,18 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       </select>
                     </div>
 
-                    <div className="text-xs text-slate-500 font-semibold">
-                      Total SI Dipilih: <strong className="text-blue-700 font-mono text-sm">Rp {totalSiFiltered.toLocaleString('id-ID')}</strong> ({filteredSiList.length} Transaksi)
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs text-slate-500 font-semibold">
+                        Total SI: <strong className="text-blue-700 font-mono text-sm">Rp {totalSiFiltered.toLocaleString('id-ID')}</strong> ({filteredSiList.length} Transaksi)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="px-4 py-2 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-lg shadow transition flex items-center gap-1.5 cursor-pointer"
+                        title="Cetak Standing Instruction dalam format A4 Landscape"
+                      >
+                        <span>🖨️</span> Cetak SI (Landscape A4)
+                      </button>
                     </div>
                   </div>
 
@@ -3258,7 +3804,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                         SURAT PERINTAH PEMBAYARAN / STANDING INSTRUCTION (SI)
                       </h2>
                       <p className="text-sm font-semibold text-slate-800">
-                        BOSP REGULER SDIT ANNISA — TAHUN ANGGARAN {headerInfo.tahunAnggaran}
+                        BOSP REGULER {headerInfo.namaSekolah ? headerInfo.namaSekolah.toUpperCase() : "SEKOLAH"} — TAHUN ANGGARAN {headerInfo.tahunAnggaran}
                       </p>
                       <p className="text-xs font-mono font-bold text-blue-800 mt-1">
                         TANGGAL TRANSAKSI SI : {selectedSiDate === "Semua" ? "SEMUA TANGGAL" : selectedSiDate}
@@ -3280,7 +3826,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
 
                     {/* TABEL PENCETAKAN STANDING INSTRUCTION (PERSIS SAMA DENGAN DOKUMEN EXCEL) */}
                     <div className="overflow-x-auto mb-8">
-                      <table className="w-full text-xs border-collapse border border-slate-900">
+                      <table className="w-full text-xs border-collapse border border-slate-900 si-print-table">
                         <thead>
                           <tr className="bg-slate-200 text-slate-900 font-bold text-center border-b-2 border-slate-900">
                             <th className="border border-slate-900 px-2 py-3 w-12 uppercase">NO</th>
@@ -3336,7 +3882,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                     </div>
 
                     {/* TANDA TANGAN BENDAHARA & KEPALA SEKOLAH (SESUAI DOKUMEN CETAK A4 LANDSCAPE) */}
-                    <div className="mt-10 pt-4 flex justify-between items-start text-xs font-semibold text-slate-900 px-6">
+                    <div className="mt-8 pt-4 flex justify-between items-start text-xs font-semibold text-slate-900 px-6" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       {/* BENDAHARA (KIRI) */}
                       <div className="text-center min-w-[200px]">
                         <p className="font-normal text-slate-900">Bendahara</p>
@@ -3347,7 +3893,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       {/* KEPALA SEKOLAH (KANAN) */}
                       <div className="text-center min-w-[220px]">
                         <p className="font-normal text-slate-900">Bekasi, {selectedSiDate === "Semua" ? "28 September 2026" : selectedSiDate}</p>
-                        <p className="font-normal text-slate-900 mt-0.5">Kepala SDIT ANNISA</p>
+                        <p className="font-normal text-slate-900 mt-0.5">Kepala {headerInfo.namaSekolah || "Sekolah"}</p>
                         <div className="h-20"></div>
                         <p className="font-bold text-slate-900">{headerInfo.kepalaSekolah}</p>
                       </div>
@@ -3584,7 +4130,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
                       {/* KEPALA SEKOLAH (KANAN) */}
                       <div className="text-center min-w-[220px]">
                         <p className="font-normal text-slate-900">Bekasi, 28 September 2026</p>
-                        <p className="font-normal text-slate-900 mt-0.5">Kepala SDIT ANNISA</p>
+                        <p className="font-normal text-slate-900 mt-0.5">Kepala {headerInfo.namaSekolah || "Sekolah"}</p>
                         <div className="h-20"></div>
                         <p className="font-bold text-slate-900">{headerInfo.kepalaSekolah}</p>
                       </div>
@@ -3658,6 +4204,14 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
               {/* VIEW: SURAT TRANSFER (PEMINDAHBUKUAN STANDING INSTRUCTION) */}
               {currentView === "surat_transfer" && (
                 <div className="space-y-6">
+                  <style>{`
+                    @media print {
+                      @page {
+                        size: A4 portrait !important;
+                        margin: 8mm 12mm !important;
+                      }
+                    }
+                  `}</style>
                   
                   {/* FILTER BAR SURAT TRANSFER (NO-PRINT) */}
                   <div className="no-print bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap justify-between items-center gap-4">
@@ -4111,6 +4665,75 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
 
                     </div>
 
+                    {/* CARD 5: KEAMANAN & UBAH PASSWORD SEKOLAH */}
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                      <div className="flex flex-wrap items-center justify-between border-b pb-3 gap-2">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                            🔐 Keamanan & Perubahan Password Akun Sekolah
+                          </h3>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Ganti password akun login untuk sekolah Anda. Standar awal akun baru adalah nomor NPSN.
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200 font-bold">
+                          User / NPSN: {currentUser?.npsn}
+                        </span>
+                      </div>
+
+                      {passwordMsg.text && (
+                        <div className={`p-3 rounded-lg text-xs font-bold border ${passwordMsg.type === "error" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                          {passwordMsg.text}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Password Baru:</label>
+                          <div className="relative">
+                            <input
+                              type={showNewPasswordVal ? "text" : "password"}
+                              value={newPasswordVal}
+                              onChange={(e) => setNewPasswordVal(e.target.value)}
+                              placeholder="Masukkan password baru..."
+                              className="w-full text-xs font-mono border border-slate-300 rounded-lg px-3 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowNewPasswordVal(!showNewPasswordVal)}
+                              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                              title="Tampilkan / Sembunyikan Password"
+                            >
+                              {showNewPasswordVal ? "🙈" : "👁️"}
+                            </button>
+                          </div>
+                          <span className="text-[11px] text-slate-400 mt-1 block">Minimal 3 karakter.</span>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Konfirmasi Password Baru:</label>
+                          <input
+                            type={showNewPasswordVal ? "text" : "password"}
+                            value={confirmPasswordVal}
+                            onChange={(e) => setConfirmPasswordVal(e.target.value)}
+                            placeholder="Ketik ulang password baru..."
+                            className="w-full text-xs font-mono border border-slate-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          />
+                          <span className="text-[11px] text-slate-400 mt-1 block">Pastikan sama dengan password baru di sebelah kiri.</span>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-2">
+                        <button
+                          type="button"
+                          onClick={handleSimpanPasswordBaru}
+                          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>🔒</span> Simpan Perubahan Password
+                        </button>
+                      </div>
+                    </div>
+
                     {/* SAVE BUTTON BAR */}
                     <div className="flex justify-end gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm sticky bottom-4 z-10">
                       <button
@@ -4369,7 +4992,7 @@ function SiBosMainApp({ currentUser, onLogout, onUpdateAccountInfo }) {
 
                       <div className="text-center min-w-[220px]">
                         <p className="font-normal text-slate-900">Bekasi, 28 September 2026</p>
-                        <p className="font-normal text-slate-900 mt-0.5">Kepala SDIT ANNISA</p>
+                        <p className="font-normal text-slate-900 mt-0.5">Kepala {headerInfo.namaSekolah || "Sekolah"}</p>
                         <div className="h-20"></div>
                         <p className="font-bold text-slate-900">{headerInfo.kepalaSekolah}</p>
                       </div>

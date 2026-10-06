@@ -140,7 +140,7 @@ if __name__ == '__main__':
     os.makedirs(webview_storage, exist_ok=True)
 
     window = webview.create_window(
-        title='SiBos — Aplikasi Management BOS SDIT ANNISA',
+        title='SiBOS — Aplikasi Pengelolaan Dana BOS & Standing Instruction',
         url=url,
         js_api=api,
         width=1280,
